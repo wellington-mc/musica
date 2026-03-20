@@ -237,6 +237,12 @@ export default function App() {
     return (match && match[7].length === 11) ? match[7] : null;
   };
 
+  const extractPlaylistId = (url: string) => {
+    const regExp = /[?&]list=([^#&?]+)/;
+    const match = url.match(regExp);
+    return match ? match[1] : null;
+  };
+
   const handleLoadVideo = (id: string) => {
     setVideoId(id);
     setIsPlaying(true);
@@ -284,7 +290,39 @@ export default function App() {
     if (!videoId) handleLoadVideo(item.id);
   };
 
-  const handleUrlAdd = () => {
+  const handleUrlAdd = async () => {
+    const playlistId = extractPlaylistId(url);
+    if (playlistId) {
+      setIsSearching(true);
+      try {
+        const response = await fetch(`https://pipedapi.kavin.rocks/playlists/${playlistId}`);
+        const data = await response.json();
+        if (data && data.relatedStreams) {
+          const newItems = data.relatedStreams.map((item: any) => ({
+            id: item.url.split('v=')[1],
+            title: item.title,
+            thumbnail: item.thumbnail
+          }));
+          
+          setPlaylist(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const uniqueNewItems = newItems.filter((item: any) => !existingIds.has(item.id));
+            return [...prev, ...uniqueNewItems];
+          });
+          
+          if (!videoId && newItems.length > 0) {
+            handleLoadVideo(newItems[0].id);
+          }
+        }
+      } catch (error) {
+        console.error('Playlist load error:', error);
+      } finally {
+        setIsSearching(false);
+        setUrl('');
+      }
+      return;
+    }
+
     const id = extractVideoId(url);
     if (id) {
       addToPlaylist({
@@ -1000,9 +1038,14 @@ export default function App() {
                 />
                 <button 
                   onClick={handleUrlAdd}
-                  className="bg-white text-black px-4 py-2 rounded-md font-bold text-sm"
+                  disabled={isSearching}
+                  className="bg-white text-black px-4 py-2 rounded-md font-bold text-sm flex items-center gap-2 disabled:opacity-50"
                 >
-                  Adicionar
+                  {isSearching ? (
+                    <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    'Adicionar'
+                  )}
                 </button>
               </div>
             </div>
