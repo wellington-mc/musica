@@ -362,6 +362,7 @@ export default function App() {
   const onPlayerStateChange = (event: any) => {
     if (event.data === 1) {
       setIsPlaying(true);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
       const data = event.target.getVideoData();
       if (data?.video_id && data.video_id !== videoId) setVideoId(data.video_id);
       if (data?.title) {
@@ -372,7 +373,10 @@ export default function App() {
         ));
       }
     }
-    if (event.data === 2) setIsPlaying(false);
+    if (event.data === 2) {
+      setIsPlaying(false);
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    }
     if (event.data === 0) {
       if (repeatMode === 'one') {
         player.playVideo();
@@ -418,7 +422,42 @@ export default function App() {
     else setIsMuted(false);
   };
 
-  const currentTrack = playlist.find(p => p.id === videoId) || { title: 'Nenhuma música tocando', thumbnail: '' };
+  const currentTrack = playlist.find(p => p.id === videoId) || { id: videoId, title: 'Nenhuma música tocando', thumbnail: '' };
+
+  // Media Session API Support
+  useEffect(() => {
+    if ('mediaSession' in navigator && currentTrack.id) {
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: currentTrack.title,
+        artist: 'SkipTube Player',
+        album: 'YouTube Music',
+        artwork: [
+          { src: currentTrack.thumbnail || 'https://picsum.photos/seed/music/512/512', sizes: '512x512', type: 'image/png' },
+          { src: `https://img.youtube.com/vi/${currentTrack.id}/maxresdefault.jpg`, sizes: '1280x720', type: 'image/jpeg' }
+        ]
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        player?.playVideo();
+        setIsPlaying(true);
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        player?.pauseVideo();
+        setIsPlaying(false);
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', handlePrevious);
+      navigator.mediaSession.setActionHandler('nexttrack', handleNext);
+      
+      try {
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+          if (details.seekTime !== undefined && player) {
+            player.seekTo(details.seekTime, true);
+            setCurrentTime(details.seekTime);
+          }
+        });
+      } catch (e) {}
+    }
+  }, [currentTrack, player]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
