@@ -101,6 +101,7 @@ export default function App() {
   
   const autoSkipInterval = useRef<NodeJS.Timeout | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
+  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Splash Screen Timeout
   useEffect(() => {
@@ -399,8 +400,27 @@ export default function App() {
   }, [isApiReady, videoId]);
 
   const togglePlay = () => {
-    if (player) isPlaying ? player.pauseVideo() : player.playVideo();
+    if (player) {
+      if (isPlaying) {
+        player.pauseVideo();
+        silentAudioRef.current?.pause();
+      } else {
+        player.playVideo();
+        silentAudioRef.current?.play().catch(() => {});
+      }
+    }
   };
+
+  // Handle Visibility Change to keep playing
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isPlaying && player) {
+        player.playVideo();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [isPlaying, player]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -439,10 +459,12 @@ export default function App() {
 
       navigator.mediaSession.setActionHandler('play', () => {
         player?.playVideo();
+        silentAudioRef.current?.play().catch(() => {});
         setIsPlaying(true);
       });
       navigator.mediaSession.setActionHandler('pause', () => {
         player?.pauseVideo();
+        silentAudioRef.current?.pause();
         setIsPlaying(false);
       });
       navigator.mediaSession.setActionHandler('previoustrack', handlePrevious);
@@ -554,6 +576,14 @@ export default function App() {
           <div id="youtube-player" className="w-full h-full"></div>
         </div>
       </div>
+
+      {/* Hidden Silent Audio for Background Playback */}
+      <audio 
+        ref={silentAudioRef} 
+        loop 
+        className="hidden"
+        src="data:audio/wav;base64,UklGRigAAABXQVZFRm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA== "
+      />
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto pb-32 px-4 pt-8">
