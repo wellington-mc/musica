@@ -102,6 +102,27 @@ export default function App() {
   const autoSkipInterval = useRef<NodeJS.Timeout | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
   const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+  
+  const wakeLock = useRef<any>(null);
+
+  // Refs to avoid stale closures in player events
+  const stateRef = useRef({
+    isPlaying,
+    videoId,
+    playlist,
+    repeatMode,
+    player
+  });
+
+  useEffect(() => {
+    stateRef.current = {
+      isPlaying,
+      videoId,
+      playlist,
+      repeatMode,
+      player
+    };
+  }, [isPlaying, videoId, playlist, repeatMode, player]);
 
   // Splash Screen Timeout
   useEffect(() => {
@@ -218,6 +239,11 @@ export default function App() {
 
   const handleLoadVideo = (id: string) => {
     setVideoId(id);
+    setIsPlaying(true);
+    if (silentAudioRef.current) {
+      silentAudioRef.current.play().catch(() => {});
+      silentAudioRef.current.volume = 0.01;
+    }
     if (player) {
       player.loadVideoById(id);
     }
@@ -357,8 +383,10 @@ export default function App() {
 
   const onPlayerReady = (event: any) => {
     setPlayer(event.target);
-    if (isPlaying) event.target.playVideo();
+    if (stateRef.current.isPlaying) event.target.playVideo();
+    
     // Force metadata update on ready
+    const { currentTrack } = stateRef.current;
     if (currentTrack.id && 'mediaSession' in navigator) {
       navigator.mediaSession.metadata = new window.MediaMetadata({
         title: currentTrack.title || 'SkipTube Music',
@@ -374,6 +402,8 @@ export default function App() {
   };
 
   const onPlayerStateChange = (event: any) => {
+    const { videoId, repeatMode, player, currentTrack } = stateRef.current;
+
     if (event.data === 1) {
       setIsPlaying(true);
       if ('mediaSession' in navigator) {
@@ -408,7 +438,7 @@ export default function App() {
     }
     if (event.data === 0) {
       if (repeatMode === 'one') {
-        player.playVideo();
+        player?.playVideo();
       } else {
         handleNext();
       }
@@ -429,7 +459,10 @@ export default function App() {
           origin: window.location.origin,
           playsinline: 1 
         },
-        events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
+        events: { 
+          onReady: (e: any) => onPlayerReady(e), 
+          onStateChange: (e: any) => onPlayerStateChange(e) 
+        }
       });
     }
   }, [isApiReady, videoId]);
@@ -455,14 +488,46 @@ export default function App() {
 
   // Handle Visibility Change to keep playing
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && isPlaying && player) {
-        player.playVideo();
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible') {
+        if (isPlaying && player) {
+          player.playVideo();
+        }
+        // Re-acquire wake lock if needed
+        if (isPlaying && 'wakeLock' in navigator && !wakeLock.current) {
+          try {
+            wakeLock.current = await (navigator as any).wakeLock.request('screen');
+          } catch (err) {}
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [isPlaying, player]);
+
+  // Wake Lock Management
+  useEffect(() => {
+    const requestWakeLock = async () => {
+      if (isPlaying && 'wakeLock' in navigator && !wakeLock.current) {
+        try {
+          wakeLock.current = await (navigator as any).wakeLock.request('screen');
+        } catch (err) {}
+      } else if (!isPlaying && wakeLock.current) {
+        try {
+          await wakeLock.current.release();
+          wakeLock.current = null;
+        } catch (err) {}
+      }
+    };
+    requestWakeLock();
+  }, [isPlaying]);
+
+  // Sync Media Session playback state
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
+  }, [isPlaying]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -505,32 +570,46 @@ export default function App() {
 
     updateMetadata();
 
+    // Periodic refresh to ensure it stays active
+    const refreshInterval = setInterval(updateMetadata, 10000);
+    
     const playAction = () => {
-      player.playVideo();
-      if (silentAudioRef.current) {
-        silentAudioRef.current.play().catch(() => {});
-        silentAudioRef.current.volume = 0.01;
+      const { player } = stateRef.current;
+      if (player) {
+        player.playVideo();
+        if (silentAudioRef.current) {
+          silentAudioRef.current.play().catch(() => {});
+          silentAudioRef.current.volume = 0.01;
+        }
+        setIsPlaying(true);
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'playing';
+        }
       }
-      setIsPlaying(true);
-      navigator.mediaSession.playbackState = 'playing';
     };
 
     const pauseAction = () => {
-      player.pauseVideo();
-      if (silentAudioRef.current) {
-        silentAudioRef.current.pause();
+      const { player } = stateRef.current;
+      if (player) {
+        player.pauseVideo();
+        if (silentAudioRef.current) {
+          silentAudioRef.current.pause();
+        }
+        setIsPlaying(false);
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'paused';
+        }
       }
-      setIsPlaying(false);
-      navigator.mediaSession.playbackState = 'paused';
     };
 
     navigator.mediaSession.setActionHandler('play', playAction);
     navigator.mediaSession.setActionHandler('pause', pauseAction);
-    navigator.mediaSession.setActionHandler('previoustrack', handlePrevious);
-    navigator.mediaSession.setActionHandler('nexttrack', handleNext);
+    navigator.mediaSession.setActionHandler('previoustrack', () => handlePrevious());
+    navigator.mediaSession.setActionHandler('nexttrack', () => handleNext());
     
     try {
       navigator.mediaSession.setActionHandler('seekto', (details) => {
+        const { player } = stateRef.current;
         if (details.seekTime !== undefined && player) {
           player.seekTo(details.seekTime, true);
           setCurrentTime(details.seekTime);
@@ -540,10 +619,23 @@ export default function App() {
 
     // Update position state periodically
     const positionInterval = setInterval(() => {
+      const { player, isPlaying } = stateRef.current;
       if (player && player.getCurrentTime && player.getDuration) {
         try {
           const currentTime = player.getCurrentTime();
           const duration = player.getDuration();
+          
+          // Watchdog: If it should be playing but is paused (likely by browser backgrounding)
+          // we try to resume it. This works better if silent audio is also playing.
+          if (isPlaying) {
+            if (player.getPlayerState && player.getPlayerState() === 2) {
+              player.playVideo();
+            }
+            if (silentAudioRef.current && silentAudioRef.current.paused) {
+              silentAudioRef.current.play().catch(() => {});
+            }
+          }
+
           if (!isNaN(currentTime) && !isNaN(duration) && duration > 0) {
             navigator.mediaSession.setPositionState({
               duration: duration,
@@ -557,6 +649,7 @@ export default function App() {
 
     return () => {
       clearInterval(positionInterval);
+      clearInterval(refreshInterval);
     };
   }, [currentTrack.id, currentTrack.title, player]);
 
@@ -648,7 +741,7 @@ export default function App() {
         className={`fixed z-[70] transition-all duration-500 pointer-events-none ${
           isNowPlayingOpen 
             ? 'top-[15%] left-8 right-8 aspect-square opacity-100 scale-100' 
-            : 'top-[-100%] left-0 opacity-0 scale-50'
+            : 'top-0 left-0 w-1 h-1 opacity-[0.001] scale-[0.001]'
         }`}
       >
         <div className="w-full h-full rounded-xl overflow-hidden shadow-2xl bg-zinc-900 border border-white/5 pointer-events-auto">
@@ -661,7 +754,8 @@ export default function App() {
         ref={silentAudioRef} 
         loop 
         className="hidden"
-        src="data:audio/wav;base64,UklGRigAAABXQVZFRm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA== "
+        src="https://www.soundjay.com/button/beep-01a.mp3" // Using a real (but very quiet) audio file as fallback if data uri fails
+        onPlay={(e) => { e.currentTarget.volume = 0.001; }}
       />
 
       {/* Main Content Area */}
