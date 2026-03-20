@@ -64,8 +64,8 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(100);
-  const [isShuffle, setIsShuffle] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<'off' | 'one' | 'all'>('off');
+  const [isShuffle, setIsShuffle] = useState(() => localStorage.getItem('skiptube_shuffle') === 'true');
+  const [repeatMode, setRepeatMode] = useState<'off' | 'one' | 'all'>(() => (localStorage.getItem('skiptube_repeat') as any) || 'off');
   const [likedSongs, setLikedSongs] = useState<any[]>(() => {
     try {
       const saved = localStorage.getItem('skiptube_liked');
@@ -97,9 +97,18 @@ export default function App() {
   const [viewingPlaylistId, setViewingPlaylistId] = useState<string | null>(null);
   const [isAddToPlaylistMenuOpen, setIsAddToPlaylistMenuOpen] = useState<any | null>(null);
   const [trackPendingPlaylist, setTrackPendingPlaylist] = useState<any | null>(null);
+  const [showSplash, setShowSplash] = useState(true);
   
   const autoSkipInterval = useRef<NodeJS.Timeout | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
+
+  // Splash Screen Timeout
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSplash(false);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Clear active menu on tab change
   useEffect(() => {
@@ -118,6 +127,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('skiptube_user_playlists', JSON.stringify(userPlaylists));
   }, [userPlaylists]);
+
+  useEffect(() => {
+    localStorage.setItem('skiptube_shuffle', String(isShuffle));
+  }, [isShuffle]);
+
+  useEffect(() => {
+    localStorage.setItem('skiptube_repeat', repeatMode);
+  }, [repeatMode]);
 
   // Progress Tracking
   useEffect(() => {
@@ -412,6 +429,80 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-white font-sans overflow-hidden flex flex-col">
+      {/* Splash Screen Animation */}
+      <AnimatePresence>
+        {showSplash && (
+          <motion.div
+            key="splash"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5 }}
+            className="fixed inset-0 z-[1000] bg-black flex flex-col items-center justify-center p-6"
+          >
+            <motion.div
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ 
+                type: "spring",
+                stiffness: 260,
+                damping: 20,
+                delay: 0.2
+              }}
+              className="relative"
+            >
+              <div className="w-32 h-32 bg-[#1DB954] rounded-full flex items-center justify-center shadow-[0_0_50px_rgba(29,185,84,0.3)]">
+                <Music2 className="w-16 h-16 text-black" />
+              </div>
+              <motion.div
+                animate={{ 
+                  scale: [1, 1.2, 1],
+                  opacity: [0.3, 0.6, 0.3]
+                }}
+                transition={{ 
+                  duration: 2,
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                className="absolute inset-0 bg-[#1DB954] rounded-full -z-10 blur-2xl"
+              />
+            </motion.div>
+            
+            <motion.div
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.5 }}
+              className="mt-8 text-center"
+            >
+              <h1 className="text-4xl font-black tracking-tighter text-white mb-2">SkipTube</h1>
+              <p className="text-zinc-500 font-medium tracking-widest uppercase text-[10px]">Premium Music Experience</p>
+            </motion.div>
+
+            <motion.div 
+              className="absolute bottom-12 left-0 right-0 flex justify-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1 }}
+            >
+              <div className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <motion.div
+                    key={i}
+                    animate={{ height: [4, 16, 4] }}
+                    transition={{ 
+                      duration: 0.6, 
+                      repeat: Infinity, 
+                      delay: i * 0.1,
+                      ease: "easeInOut"
+                    }}
+                    className="w-1 bg-[#1DB954] rounded-full"
+                  />
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Persistent YouTube Player Container */}
       <div 
         className={`fixed z-[70] transition-all duration-500 pointer-events-none ${
