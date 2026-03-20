@@ -383,10 +383,11 @@ export default function App() {
 
   const onPlayerReady = (event: any) => {
     setPlayer(event.target);
-    if (stateRef.current.isPlaying) event.target.playVideo();
+    const { isPlaying, videoId, playlist } = stateRef.current;
+    if (isPlaying) event.target.playVideo();
     
     // Force metadata update on ready
-    const { currentTrack } = stateRef.current;
+    const currentTrack = playlist.find(p => p.id === videoId) || { id: videoId, title: 'SkipTube Music', thumbnail: '' };
     if (currentTrack.id && 'mediaSession' in navigator) {
       navigator.mediaSession.metadata = new window.MediaMetadata({
         title: currentTrack.title || 'SkipTube Music',
@@ -402,7 +403,8 @@ export default function App() {
   };
 
   const onPlayerStateChange = (event: any) => {
-    const { videoId, repeatMode, player, currentTrack } = stateRef.current;
+    const { videoId, repeatMode, player, playlist } = stateRef.current;
+    const currentTrack = playlist.find(p => p.id === videoId) || { id: videoId, title: 'SkipTube Music', thumbnail: '' };
 
     if (event.data === 1) {
       setIsPlaying(true);
@@ -434,6 +436,9 @@ export default function App() {
     }
     if (event.data === 2) {
       setIsPlaying(false);
+      if (silentAudioRef.current) {
+        silentAudioRef.current.pause();
+      }
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     }
     if (event.data === 0) {
@@ -754,7 +759,7 @@ export default function App() {
         ref={silentAudioRef} 
         loop 
         className="hidden"
-        src="https://www.soundjay.com/button/beep-01a.mp3" // Using a real (but very quiet) audio file as fallback if data uri fails
+        src="data:audio/wav;base64,UklGRigAAABXQVZFRm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA=="
         onPlay={(e) => { e.currentTarget.volume = 0.001; }}
       />
 
