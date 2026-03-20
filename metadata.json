@@ -1,0 +1,5 @@
+{
+  "name": "SkipTube",
+  "description": "Um player de YouTube mãos-livres otimizado para mobile que automatiza a reprodução de playlists e facilita o pulo de anúncios.",
+  "requestFramePermissions": []
+}
