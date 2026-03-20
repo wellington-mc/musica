@@ -558,38 +558,40 @@ export default function App() {
 
   // Media Session API Support
   useEffect(() => {
-    if (!('mediaSession' in navigator) || !currentTrack.id || !player) return;
+    if (!('mediaSession' in navigator) || !player) return;
+
+    const currentTrack = playlist.find(p => p.id === videoId) || { id: videoId, title: 'SkipTube Music', thumbnail: '' };
 
     const updateMetadata = () => {
-      navigator.mediaSession.metadata = new window.MediaMetadata({
-        title: currentTrack.title || 'SkipTube Music',
-        artist: 'SkipTube Player',
-        album: 'YouTube Music',
-        artwork: [
-          { src: currentTrack.thumbnail || 'https://picsum.photos/seed/music/512/512', sizes: '512x512', type: 'image/png' },
-          { src: `https://img.youtube.com/vi/${currentTrack.id}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
-          { src: `https://img.youtube.com/vi/${currentTrack.id}/maxresdefault.jpg`, sizes: '1280x720', type: 'image/jpeg' }
-        ]
-      });
+      if (!currentTrack.id) return;
+      try {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: currentTrack.title || 'Música',
+          artist: 'SkipTube Player',
+          album: 'YouTube Music',
+          artwork: [
+            { src: currentTrack.thumbnail || `https://img.youtube.com/vi/${currentTrack.id}/maxresdefault.jpg`, sizes: '512x512', type: 'image/jpeg' },
+            { src: `https://img.youtube.com/vi/${currentTrack.id}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' },
+            { src: `https://img.youtube.com/vi/${currentTrack.id}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' }
+          ]
+        });
+      } catch (e) {
+        console.error('Error updating MediaSession metadata:', e);
+      }
     };
 
     updateMetadata();
+    const refreshInterval = setInterval(updateMetadata, 5000); // Refresh more often to keep session alive
 
-    // Periodic refresh to ensure it stays active
-    const refreshInterval = setInterval(updateMetadata, 10000);
-    
     const playAction = () => {
       const { player } = stateRef.current;
       if (player) {
         player.playVideo();
         if (silentAudioRef.current) {
           silentAudioRef.current.play().catch(() => {});
-          silentAudioRef.current.volume = 0.01;
         }
         setIsPlaying(true);
-        if ('mediaSession' in navigator) {
-          navigator.mediaSession.playbackState = 'playing';
-        }
+        navigator.mediaSession.playbackState = 'playing';
       }
     };
 
@@ -601,9 +603,7 @@ export default function App() {
           silentAudioRef.current.pause();
         }
         setIsPlaying(false);
-        if ('mediaSession' in navigator) {
-          navigator.mediaSession.playbackState = 'paused';
-        }
+        navigator.mediaSession.playbackState = 'paused';
       }
     };
 
@@ -622,7 +622,7 @@ export default function App() {
       });
     } catch (e) {}
 
-    // Update position state periodically
+    // Watchdog and Position Sync
     const positionInterval = setInterval(() => {
       const { player, isPlaying } = stateRef.current;
       if (player && player.getCurrentTime && player.getDuration) {
@@ -630,14 +630,14 @@ export default function App() {
           const currentTime = player.getCurrentTime();
           const duration = player.getDuration();
           
-          // Watchdog: If it should be playing but is paused (likely by browser backgrounding)
-          // we try to resume it. This works better if silent audio is also playing.
           if (isPlaying) {
-            if (player.getPlayerState && player.getPlayerState() === 2) {
-              player.playVideo();
-            }
+            // Ensure silent audio is playing to keep process alive
             if (silentAudioRef.current && silentAudioRef.current.paused) {
               silentAudioRef.current.play().catch(() => {});
+            }
+            // If YouTube paused itself (background restriction), try to resume
+            if (player.getPlayerState && player.getPlayerState() === 2) {
+              player.playVideo();
             }
           }
 
@@ -650,13 +650,13 @@ export default function App() {
           }
         } catch (e) {}
       }
-    }, 2000);
+    }, 1000);
 
     return () => {
       clearInterval(positionInterval);
       clearInterval(refreshInterval);
     };
-  }, [currentTrack.id, currentTrack.title, player]);
+  }, [videoId, playlist, player]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
