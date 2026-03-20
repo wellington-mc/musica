@@ -51,8 +51,13 @@ export default function App() {
   const [autoSkip, setAutoSkip] = useState(true);
   const [isAdDetected, setIsAdDetected] = useState(false);
   const [playlist, setPlaylist] = useState<{id: string, title: string, thumbnail: string}[]>(() => {
-    const saved = localStorage.getItem('skiptube_playlist');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('skiptube_playlist');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
   });
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'home' | 'search' | 'library'>('home');
@@ -62,10 +67,15 @@ export default function App() {
   const [isShuffle, setIsShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'one' | 'all'>('off');
   const [likedSongs, setLikedSongs] = useState<any[]>(() => {
-    const saved = localStorage.getItem('skiptube_liked');
-    if (!saved) return [];
-    const parsed = JSON.parse(saved);
-    return parsed.map((item: any) => typeof item === 'string' ? { id: item, title: 'Música', thumbnail: '' } : item);
+    try {
+      const saved = localStorage.getItem('skiptube_liked');
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((item: any) => typeof item === 'string' ? { id: item, title: 'Música', thumbnail: '' } : item);
+    } catch (e) {
+      return [];
+    }
   });
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -73,6 +83,20 @@ export default function App() {
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [viewingLiked, setViewingLiked] = useState(false);
+  const [userPlaylists, setUserPlaylists] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem('skiptube_user_playlists');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [isCreatePlaylistModalOpen, setIsCreatePlaylistModalOpen] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [viewingPlaylistId, setViewingPlaylistId] = useState<string | null>(null);
+  const [isAddToPlaylistMenuOpen, setIsAddToPlaylistMenuOpen] = useState<any | null>(null);
+  const [trackPendingPlaylist, setTrackPendingPlaylist] = useState<any | null>(null);
   
   const autoSkipInterval = useRef<NodeJS.Timeout | null>(null);
   const progressInterval = useRef<NodeJS.Timeout | null>(null);
@@ -90,6 +114,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('skiptube_liked', JSON.stringify(likedSongs));
   }, [likedSongs]);
+
+  useEffect(() => {
+    localStorage.setItem('skiptube_user_playlists', JSON.stringify(userPlaylists));
+  }, [userPlaylists]);
 
   // Progress Tracking
   useEffect(() => {
@@ -243,6 +271,45 @@ export default function App() {
 
   const removeFromPlaylist = (id: string) => {
     setPlaylist(prev => prev.filter(p => p.id !== id));
+  };
+
+  const createNewPlaylist = () => {
+    const name = newPlaylistName.trim() || `Minha Playlist #${userPlaylists.length + 1}`;
+    const newPlaylist = {
+      id: Date.now().toString(),
+      name: name,
+      items: trackPendingPlaylist ? [trackPendingPlaylist] : []
+    };
+    setUserPlaylists(prev => [...prev, newPlaylist]);
+    setNewPlaylistName('');
+    setTrackPendingPlaylist(null);
+    setIsCreatePlaylistModalOpen(false);
+  };
+
+  const addToUserPlaylist = (playlistId: string, track: any) => {
+    setUserPlaylists(prev => prev.map(pl => {
+      if (pl.id === playlistId) {
+        if (pl.items.some((item: any) => item.id === track.id)) return pl;
+        return { ...pl, items: [...pl.items, track] };
+      }
+      return pl;
+    }));
+    setIsAddToPlaylistMenuOpen(null);
+    setActiveMenuId(null);
+  };
+
+  const removeFromUserPlaylist = (playlistId: string, trackId: string) => {
+    setUserPlaylists(prev => prev.map(pl => {
+      if (pl.id === playlistId) {
+        return { ...pl, items: pl.items.filter((item: any) => item.id !== trackId) };
+      }
+      return pl;
+    }));
+  };
+
+  const deletePlaylist = (playlistId: string) => {
+    setUserPlaylists(prev => prev.filter(pl => pl.id !== playlistId));
+    if (viewingPlaylistId === playlistId) setViewingPlaylistId(null);
   };
 
   const handleNext = () => {
@@ -440,13 +507,23 @@ export default function App() {
                                 </button>
                                 <button 
                                   onClick={() => {
+                                    setIsAddToPlaylistMenuOpen(item);
+                                    setActiveMenuId(null);
+                                  }}
+                                  className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                  Adicionar à Playlist...
+                                </button>
+                                <button 
+                                  onClick={() => {
                                     removeFromPlaylist(item.id);
                                     setActiveMenuId(null);
                                   }}
                                   className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm text-red-400"
                                 >
                                   <Plus className="w-4 h-4 rotate-45" />
-                                  Remover da Playlist
+                                  Remover da Fila
                                 </button>
                               </motion.div>
                             </>
@@ -535,13 +612,23 @@ export default function App() {
                                 </button>
                                 <button 
                                   onClick={() => {
-                                    addToPlaylist({ id: item.id, title: item.title, thumbnail: item.thumbnail });
+                                    setIsAddToPlaylistMenuOpen(item);
                                     setActiveMenuId(null);
                                   }}
                                   className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
                                 >
                                   <Plus className="w-4 h-4" />
-                                  Adicionar à Playlist
+                                  Adicionar à Playlist...
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    addToPlaylist({ id: item.id, title: item.title, thumbnail: item.thumbnail });
+                                    setActiveMenuId(null);
+                                  }}
+                                  className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
+                                >
+                                  <Play className="w-4 h-4" />
+                                  Adicionar à Fila
                                 </button>
                               </motion.div>
                             </>
@@ -584,20 +671,22 @@ export default function App() {
           </motion.div>
         )}
 
-        {activeTab === 'library' && (
+         {activeTab === 'library' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
              <div className="flex items-center gap-4">
-               {viewingLiked ? (
-                 <button onClick={() => setViewingLiked(false)} className="p-2 -ml-2">
-                   <SkipBack className="w-6 h-6 rotate-90" />
+               {(viewingLiked || viewingPlaylistId) ? (
+                 <button onClick={() => { setViewingLiked(false); setViewingPlaylistId(null); }} className="p-2 -ml-2">
+                   <SkipBack className="w-6 h-6" />
                  </button>
                ) : (
                  <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center text-xl font-bold">W</div>
                )}
-               <h1 className="text-2xl font-bold">{viewingLiked ? 'Músicas Curtidas' : 'Sua Biblioteca'}</h1>
+               <h1 className="text-2xl font-bold">
+                 {viewingLiked ? 'Músicas Curtidas' : viewingPlaylistId ? userPlaylists.find(pl => pl.id === viewingPlaylistId)?.name : 'Sua Biblioteca'}
+               </h1>
              </div>
 
-             {!viewingLiked ? (
+             {!viewingLiked && !viewingPlaylistId ? (
                <>
                  <div className="flex gap-2">
                    <span className="px-3 py-1 rounded-full border border-zinc-700 text-xs font-medium">Playlists</span>
@@ -618,13 +707,44 @@ export default function App() {
 
                  <div className="space-y-4 pt-4">
                    <h3 className="font-bold text-sm">Suas Playlists</h3>
-                   <div className="flex items-center gap-4 p-2 cursor-pointer hover:bg-zinc-900 rounded-lg transition-colors">
+                   <div 
+                     onClick={() => setIsCreatePlaylistModalOpen(true)}
+                     className="flex items-center gap-4 p-2 cursor-pointer hover:bg-zinc-900 rounded-lg transition-colors"
+                   >
                      <div className="w-16 h-16 bg-zinc-800 rounded flex items-center justify-center">
                        <Plus className="w-8 h-8 text-zinc-500" />
                      </div>
                      <p className="font-bold">Criar Nova Playlist</p>
                    </div>
+
+                   {userPlaylists.map(pl => (
+                     <div key={pl.id} className="flex items-center justify-between p-2 group relative">
+                       <div 
+                         onClick={() => setViewingPlaylistId(pl.id)}
+                         className="flex items-center gap-4 flex-1 cursor-pointer min-w-0"
+                       >
+                         <div className="w-16 h-16 bg-zinc-800 rounded flex items-center justify-center overflow-hidden">
+                           {pl.items.length > 0 ? (
+                             <img src={pl.items[0].thumbnail} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                           ) : (
+                             <Music2 className="w-8 h-8 text-zinc-600" />
+                           )}
+                         </div>
+                         <div className="min-w-0">
+                           <p className="font-bold truncate">{pl.name}</p>
+                           <p className="text-xs text-zinc-400">Playlist • {pl.items.length} músicas</p>
+                         </div>
+                       </div>
+                       <button 
+                         onClick={() => deletePlaylist(pl.id)}
+                         className="p-2 text-zinc-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                       >
+                         <Plus className="w-5 h-5 rotate-45" />
+                       </button>
+                     </div>
+                   ))}
                    
+                   <h3 className="font-bold text-sm pt-4">Fila de Reprodução</h3>
                    {playlist.map(item => (
                      <div key={item.id} className="flex items-center justify-between p-2 group relative">
                        <div onClick={() => handleLoadVideo(item.id)} className="flex items-center gap-4 flex-1 cursor-pointer min-w-0">
@@ -674,13 +794,23 @@ export default function App() {
                                  </button>
                                  <button 
                                    onClick={() => {
+                                     setIsAddToPlaylistMenuOpen(item);
+                                     setActiveMenuId(null);
+                                   }}
+                                   className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
+                                 >
+                                   <Plus className="w-4 h-4" />
+                                   Adicionar à Playlist...
+                                 </button>
+                                 <button 
+                                   onClick={() => {
                                      removeFromPlaylist(item.id);
                                      setActiveMenuId(null);
                                    }}
                                    className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm text-red-400"
                                  >
                                    <Plus className="w-4 h-4 rotate-45" />
-                                   Remover da Playlist
+                                   Remover da Fila
                                  </button>
                                </motion.div>
                              </>
@@ -693,77 +823,161 @@ export default function App() {
                </>
              ) : (
                <div className="space-y-4">
-                 {likedSongs.length === 0 ? (
-                   <div className="text-center py-20 text-zinc-500">
-                     <Heart className="w-16 h-16 mx-auto mb-4 opacity-10" />
-                     <p>Você ainda não curtiu nenhuma música.</p>
-                   </div>
-                 ) : (
-                   likedSongs.map(item => (
-                     <div key={item.id} className="flex items-center justify-between p-2 group relative">
-                       <div onClick={() => handleLoadVideo(item.id)} className="flex items-center gap-4 flex-1 cursor-pointer min-w-0">
-                         <img 
-                           src={item.thumbnail} 
-                           className="w-16 h-16 rounded object-cover" 
-                           alt="" 
-                           referrerPolicy="no-referrer"
-                         />
-                         <div className="min-w-0">
-                           <p className={`font-bold truncate ${item.id === videoId ? 'text-[#1DB954]' : 'text-white'}`}>{item.title}</p>
-                           <p className="text-xs text-zinc-400">Música</p>
+                 {viewingLiked ? (
+                   likedSongs.length === 0 ? (
+                     <div className="text-center py-20 text-zinc-500">
+                       <Heart className="w-16 h-16 mx-auto mb-4 opacity-10" />
+                       <p>Você ainda não curtiu nenhuma música.</p>
+                     </div>
+                   ) : (
+                     likedSongs.map(item => (
+                       <div key={item.id} className="flex items-center justify-between p-2 group relative">
+                         <div onClick={() => handleLoadVideo(item.id)} className="flex items-center gap-4 flex-1 cursor-pointer min-w-0">
+                           <img 
+                             src={item.thumbnail} 
+                             className="w-16 h-16 rounded object-cover" 
+                             alt="" 
+                             referrerPolicy="no-referrer"
+                           />
+                           <div className="min-w-0">
+                             <p className={`font-bold truncate ${item.id === videoId ? 'text-[#1DB954]' : 'text-white'}`}>{item.title}</p>
+                             <p className="text-xs text-zinc-400">Música</p>
+                           </div>
+                         </div>
+                         <div className="relative">
+                           <button 
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setActiveMenuId(activeMenuId === item.id ? null : item.id);
+                             }} 
+                             className="p-2 text-zinc-500 hover:text-white transition-colors"
+                           >
+                             <MoreVertical className="w-5 h-5" />
+                           </button>
+                           <AnimatePresence>
+                             {activeMenuId === item.id && (
+                               <>
+                                 <div 
+                                   className="fixed inset-0 z-[80]" 
+                                   onClick={() => setActiveMenuId(null)}
+                                 />
+                                 <motion.div 
+                                   initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                                   animate={{ opacity: 1, scale: 1, y: 0 }}
+                                   exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                                   className="absolute right-0 top-10 bg-zinc-800 rounded-lg shadow-xl border border-white/10 py-1 w-48 z-[90]"
+                                 >
+                                   <button 
+                                     onClick={() => {
+                                       toggleLike(item.id, item.title, item.thumbnail);
+                                       setActiveMenuId(null);
+                                     }}
+                                     className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
+                                   >
+                                     <Heart className="w-4 h-4 fill-[#1DB954] text-[#1DB954]" />
+                                     Remover das Curtidas
+                                   </button>
+                                   <button 
+                                     onClick={() => {
+                                       addToPlaylist({ id: item.id, title: item.title, thumbnail: item.thumbnail });
+                                       setActiveMenuId(null);
+                                     }}
+                                     className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
+                                   >
+                                     <Plus className="w-4 h-4" />
+                                     Adicionar à Fila
+                                   </button>
+                                 </motion.div>
+                               </>
+                             )}
+                           </AnimatePresence>
                          </div>
                        </div>
-                       <div className="relative">
-                         <button 
-                           onClick={(e) => {
-                             e.stopPropagation();
-                             setActiveMenuId(activeMenuId === item.id ? null : item.id);
-                           }} 
-                           className="p-2 text-zinc-500 hover:text-white transition-colors"
-                         >
-                           <MoreVertical className="w-5 h-5" />
-                         </button>
-                         <AnimatePresence>
-                           {activeMenuId === item.id && (
-                             <>
-                               <div 
-                                 className="fixed inset-0 z-[80]" 
-                                 onClick={() => setActiveMenuId(null)}
-                               />
-                               <motion.div 
-                                 initial={{ opacity: 0, scale: 0.95, y: -10 }}
-                                 animate={{ opacity: 1, scale: 1, y: 0 }}
-                                 exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                                 className="absolute right-0 top-10 bg-zinc-800 rounded-lg shadow-xl border border-white/10 py-1 w-48 z-[90]"
-                               >
-                                 <button 
-                                   onClick={() => {
-                                     toggleLike(item.id, item.title, item.thumbnail);
-                                     setActiveMenuId(null);
-                                   }}
-                                   className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
-                                 >
-                                   <Heart className="w-4 h-4 fill-[#1DB954] text-[#1DB954]" />
-                                   Remover das Curtidas
-                                 </button>
-                                 <button 
-                                   onClick={() => {
-                                     addToPlaylist({ id: item.id, title: item.title, thumbnail: item.thumbnail });
-                                     setActiveMenuId(null);
-                                   }}
-                                   className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
-                                 >
-                                   <Plus className="w-4 h-4" />
-                                   Adicionar à Playlist
-                                 </button>
-                               </motion.div>
-                             </>
-                           )}
-                         </AnimatePresence>
-                       </div>
+                     ))
+                   )
+                 ) : viewingPlaylistId ? (
+                   userPlaylists.find(pl => pl.id === viewingPlaylistId)?.items.length === 0 ? (
+                     <div className="text-center py-20 text-zinc-500">
+                       <Music2 className="w-16 h-16 mx-auto mb-4 opacity-10" />
+                       <p>Esta playlist está vazia.</p>
                      </div>
-                   ))
-                 )}
+                   ) : (
+                     userPlaylists.find(pl => pl.id === viewingPlaylistId)?.items.map(item => (
+                       <div key={item.id} className="flex items-center justify-between p-2 group relative">
+                         <div onClick={() => handleLoadVideo(item.id)} className="flex items-center gap-4 flex-1 cursor-pointer min-w-0">
+                           <img 
+                             src={item.thumbnail} 
+                             className="w-16 h-16 rounded object-cover" 
+                             alt="" 
+                             referrerPolicy="no-referrer"
+                           />
+                           <div className="min-w-0">
+                             <p className={`font-bold truncate ${item.id === videoId ? 'text-[#1DB954]' : 'text-white'}`}>{item.title}</p>
+                             <p className="text-xs text-zinc-400">Música</p>
+                           </div>
+                         </div>
+                         <div className="relative">
+                           <button 
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setActiveMenuId(activeMenuId === item.id ? null : item.id);
+                             }} 
+                             className="p-2 text-zinc-500 hover:text-white transition-colors"
+                           >
+                             <MoreVertical className="w-5 h-5" />
+                           </button>
+                           <AnimatePresence>
+                             {activeMenuId === item.id && (
+                               <>
+                                 <div 
+                                   className="fixed inset-0 z-[80]" 
+                                   onClick={() => setActiveMenuId(null)}
+                                 />
+                                 <motion.div 
+                                   initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                                   animate={{ opacity: 1, scale: 1, y: 0 }}
+                                   exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                                   className="absolute right-0 top-10 bg-zinc-800 rounded-lg shadow-xl border border-white/10 py-1 w-48 z-[90]"
+                                 >
+                                   <button 
+                                     onClick={() => {
+                                       toggleLike(item.id, item.title, item.thumbnail);
+                                       setActiveMenuId(null);
+                                     }}
+                                     className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
+                                   >
+                                     <Heart className={`w-4 h-4 ${likedSongs.some(s => s.id === item.id) ? 'fill-[#1DB954] text-[#1DB954]' : ''}`} />
+                                     {likedSongs.some(s => s.id === item.id) ? 'Remover das Curtidas' : 'Curtir'}
+                                   </button>
+                                   <button 
+                                     onClick={() => {
+                                       addToPlaylist({ id: item.id, title: item.title, thumbnail: item.thumbnail });
+                                       setActiveMenuId(null);
+                                     }}
+                                     className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm"
+                                   >
+                                     <Plus className="w-4 h-4" />
+                                     Adicionar à Fila
+                                   </button>
+                                   <button 
+                                     onClick={() => {
+                                       removeFromUserPlaylist(viewingPlaylistId!, item.id);
+                                       setActiveMenuId(null);
+                                     }}
+                                     className="w-full text-left px-4 py-2 hover:bg-zinc-700 flex items-center gap-3 text-sm text-red-400"
+                                   >
+                                     <Plus className="w-4 h-4 rotate-45" />
+                                     Remover da Playlist
+                                   </button>
+                                 </motion.div>
+                               </>
+                             )}
+                           </AnimatePresence>
+                         </div>
+                       </div>
+                     ))
+                   )
+                 ) : null}
                </div>
              )}
           </motion.div>
@@ -802,6 +1016,126 @@ export default function App() {
               />
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Create Playlist Modal */}
+      <AnimatePresence>
+        {isCreatePlaylistModalOpen && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              onClick={() => setIsCreatePlaylistModalOpen(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-zinc-900 border border-white/10 p-8 rounded-2xl w-full max-w-md relative z-[201] shadow-2xl"
+            >
+              <h2 className="text-2xl font-bold mb-6">Nova Playlist</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2 block">Nome da Playlist</label>
+                  <input 
+                    type="text" 
+                    autoFocus
+                    value={newPlaylistName}
+                    onChange={(e) => setNewPlaylistName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && createNewPlaylist()}
+                    placeholder="Minha Playlist #1"
+                    className="w-full bg-zinc-800 border border-transparent focus:border-zinc-700 rounded-lg p-4 text-white outline-none transition-colors"
+                  />
+                </div>
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    onClick={() => setIsCreatePlaylistModalOpen(false)}
+                    className="flex-1 py-3 rounded-full font-bold hover:bg-white/5 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button 
+                    onClick={createNewPlaylist}
+                    className="flex-1 py-3 rounded-full font-bold bg-[#1DB954] text-black hover:scale-105 transition-transform"
+                  >
+                    Criar
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Add to Playlist Modal */}
+      <AnimatePresence>
+        {isAddToPlaylistMenuOpen && (
+          <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              onClick={() => setIsAddToPlaylistMenuOpen(null)}
+            />
+            <motion.div 
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="bg-zinc-900 border-t sm:border border-white/10 p-6 rounded-t-3xl sm:rounded-2xl w-full max-w-md relative z-[301] shadow-2xl max-h-[80vh] overflow-y-auto"
+            >
+              <div className="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto mb-6 sm:hidden" />
+              <h2 className="text-xl font-bold mb-6">Adicionar à Playlist</h2>
+              <div className="space-y-2">
+                <button 
+                  onClick={() => {
+                    setTrackPendingPlaylist(isAddToPlaylistMenuOpen);
+                    setIsCreatePlaylistModalOpen(true);
+                    setIsAddToPlaylistMenuOpen(null);
+                  }}
+                  className="w-full flex items-center gap-4 p-3 hover:bg-zinc-800 rounded-lg transition-colors"
+                >
+                  <div className="w-12 h-12 bg-zinc-800 rounded flex items-center justify-center">
+                    <Plus className="w-6 h-6" />
+                  </div>
+                  <span className="font-bold">Nova Playlist</span>
+                </button>
+                
+                {userPlaylists.length === 0 ? (
+                  <p className="text-center py-8 text-zinc-500 text-sm">Você não tem playlists criadas.</p>
+                ) : (
+                  userPlaylists.map(pl => (
+                    <button 
+                      key={pl.id}
+                      onClick={() => addToUserPlaylist(pl.id, isAddToPlaylistMenuOpen)}
+                      className="w-full flex items-center gap-4 p-3 hover:bg-zinc-800 rounded-lg transition-colors"
+                    >
+                      <div className="w-12 h-12 bg-zinc-800 rounded flex items-center justify-center overflow-hidden">
+                        {pl.items.length > 0 ? (
+                          <img src={pl.items[0].thumbnail} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                        ) : (
+                          <Music2 className="w-6 h-6 text-zinc-600" />
+                        )}
+                      </div>
+                      <div className="text-left">
+                        <p className="font-bold">{pl.name}</p>
+                        <p className="text-xs text-zinc-400">{pl.items.length} músicas</p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+              <button 
+                onClick={() => setIsAddToPlaylistMenuOpen(null)}
+                className="w-full mt-6 py-3 rounded-full font-bold bg-zinc-800 hover:bg-zinc-700 transition-colors"
+              >
+                Fechar
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
