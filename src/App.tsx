@@ -358,12 +358,40 @@ export default function App() {
   const onPlayerReady = (event: any) => {
     setPlayer(event.target);
     if (isPlaying) event.target.playVideo();
+    // Force metadata update on ready
+    if (currentTrack.id && 'mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: currentTrack.title || 'SkipTube Music',
+        artist: 'SkipTube Player',
+        album: 'YouTube Music',
+        artwork: [
+          { src: currentTrack.thumbnail || 'https://picsum.photos/seed/music/512/512', sizes: '512x512', type: 'image/png' },
+          { src: `https://img.youtube.com/vi/${currentTrack.id}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
+          { src: `https://img.youtube.com/vi/${currentTrack.id}/maxresdefault.jpg`, sizes: '1280x720', type: 'image/jpeg' }
+        ]
+      });
+    }
   };
 
   const onPlayerStateChange = (event: any) => {
     if (event.data === 1) {
       setIsPlaying(true);
-      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'playing';
+        // Refresh metadata on play
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: currentTrack.title || 'SkipTube Music',
+          artist: 'SkipTube Player',
+          artwork: [
+            { src: currentTrack.thumbnail || 'https://picsum.photos/seed/music/512/512', sizes: '512x512', type: 'image/png' },
+            { src: `https://img.youtube.com/vi/${currentTrack.id}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' }
+          ]
+        });
+      }
+      if (silentAudioRef.current) {
+        silentAudioRef.current.play().catch(() => {});
+        silentAudioRef.current.volume = 0.01;
+      }
       const data = event.target.getVideoData();
       if (data?.video_id && data.video_id !== videoId) setVideoId(data.video_id);
       if (data?.title) {
@@ -393,7 +421,14 @@ export default function App() {
         height: '100%',
         width: '100%',
         videoId: videoId,
-        playerVars: { autoplay: 1, controls: 0, modestbranding: 1, rel: 0, origin: window.location.origin },
+        playerVars: { 
+          autoplay: 1, 
+          controls: 0, 
+          modestbranding: 1, 
+          rel: 0, 
+          origin: window.location.origin,
+          playsinline: 1 
+        },
         events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
       });
     }
@@ -403,10 +438,17 @@ export default function App() {
     if (player) {
       if (isPlaying) {
         player.pauseVideo();
-        silentAudioRef.current?.pause();
+        if (silentAudioRef.current) {
+          silentAudioRef.current.pause();
+        }
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       } else {
         player.playVideo();
-        silentAudioRef.current?.play().catch(() => {});
+        if (silentAudioRef.current) {
+          silentAudioRef.current.play().catch(() => {});
+          silentAudioRef.current.volume = 0.01; // Tiny volume to keep it active
+        }
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
       }
     }
   };
@@ -446,40 +488,77 @@ export default function App() {
 
   // Media Session API Support
   useEffect(() => {
-    if ('mediaSession' in navigator && currentTrack.id) {
+    if (!('mediaSession' in navigator) || !currentTrack.id || !player) return;
+
+    const updateMetadata = () => {
       navigator.mediaSession.metadata = new window.MediaMetadata({
-        title: currentTrack.title,
+        title: currentTrack.title || 'SkipTube Music',
         artist: 'SkipTube Player',
         album: 'YouTube Music',
         artwork: [
           { src: currentTrack.thumbnail || 'https://picsum.photos/seed/music/512/512', sizes: '512x512', type: 'image/png' },
+          { src: `https://img.youtube.com/vi/${currentTrack.id}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
           { src: `https://img.youtube.com/vi/${currentTrack.id}/maxresdefault.jpg`, sizes: '1280x720', type: 'image/jpeg' }
         ]
       });
+    };
 
-      navigator.mediaSession.setActionHandler('play', () => {
-        player?.playVideo();
-        silentAudioRef.current?.play().catch(() => {});
-        setIsPlaying(true);
+    updateMetadata();
+
+    const playAction = () => {
+      player.playVideo();
+      if (silentAudioRef.current) {
+        silentAudioRef.current.play().catch(() => {});
+        silentAudioRef.current.volume = 0.01;
+      }
+      setIsPlaying(true);
+      navigator.mediaSession.playbackState = 'playing';
+    };
+
+    const pauseAction = () => {
+      player.pauseVideo();
+      if (silentAudioRef.current) {
+        silentAudioRef.current.pause();
+      }
+      setIsPlaying(false);
+      navigator.mediaSession.playbackState = 'paused';
+    };
+
+    navigator.mediaSession.setActionHandler('play', playAction);
+    navigator.mediaSession.setActionHandler('pause', pauseAction);
+    navigator.mediaSession.setActionHandler('previoustrack', handlePrevious);
+    navigator.mediaSession.setActionHandler('nexttrack', handleNext);
+    
+    try {
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined && player) {
+          player.seekTo(details.seekTime, true);
+          setCurrentTime(details.seekTime);
+        }
       });
-      navigator.mediaSession.setActionHandler('pause', () => {
-        player?.pauseVideo();
-        silentAudioRef.current?.pause();
-        setIsPlaying(false);
-      });
-      navigator.mediaSession.setActionHandler('previoustrack', handlePrevious);
-      navigator.mediaSession.setActionHandler('nexttrack', handleNext);
-      
-      try {
-        navigator.mediaSession.setActionHandler('seekto', (details) => {
-          if (details.seekTime !== undefined && player) {
-            player.seekTo(details.seekTime, true);
-            setCurrentTime(details.seekTime);
+    } catch (e) {}
+
+    // Update position state periodically
+    const positionInterval = setInterval(() => {
+      if (player && player.getCurrentTime && player.getDuration) {
+        try {
+          const currentTime = player.getCurrentTime();
+          const duration = player.getDuration();
+          if (!isNaN(currentTime) && !isNaN(duration) && duration > 0) {
+            navigator.mediaSession.setPositionState({
+              duration: duration,
+              playbackRate: player.getPlaybackRate() || 1,
+              position: currentTime
+            });
           }
-        });
-      } catch (e) {}
-    }
-  }, [currentTrack, player]);
+        } catch (e) {}
+      }
+    }, 2000);
+
+    return () => {
+      clearInterval(positionInterval);
+    };
+  }, [currentTrack.id, currentTrack.title, player]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -1176,6 +1255,71 @@ export default function App() {
               />
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Info Modal */}
+      <AnimatePresence>
+        {showInfo && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+              onClick={() => setShowInfo(false)}
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-zinc-900 border border-white/10 p-6 rounded-2xl w-full max-w-md relative z-[501] shadow-2xl overflow-y-auto max-h-[80vh]"
+            >
+              <h2 className="text-2xl font-bold mb-6">Sobre o SkipTube</h2>
+              <div className="space-y-6 text-sm text-zinc-300">
+                <section>
+                  <h3 className="text-white font-bold mb-2 flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-[#1DB954]" />
+                    Segundo Plano (Background)
+                  </h3>
+                  <p className="leading-relaxed">
+                    Para ouvir com a tela bloqueada:
+                    <ol className="list-decimal list-inside mt-2 space-y-1">
+                      <li>Dê o play na música.</li>
+                      <li>Bloqueie a tela.</li>
+                      <li>Se parar, use os controles que aparecerão na tela de bloqueio para dar Play novamente.</li>
+                    </ol>
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-white font-bold mb-2 flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-[#1DB954]" />
+                    Modo Turbo (Auto-Skip)
+                  </h3>
+                  <p className="leading-relaxed">
+                    O SkipTube detecta e pula anúncios automaticamente, silenciando o áudio durante o processo para uma experiência sem interrupções.
+                  </p>
+                </section>
+
+                <section>
+                  <h3 className="text-white font-bold mb-2 flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-[#1DB954]" />
+                    Instalação PWA
+                  </h3>
+                  <p className="leading-relaxed">
+                    Adicione o SkipTube à sua tela de início para usá-lo como um aplicativo nativo.
+                  </p>
+                </section>
+              </div>
+              <button 
+                onClick={() => setShowInfo(false)}
+                className="w-full mt-8 py-3 rounded-full font-bold bg-white text-black hover:scale-105 transition-transform"
+              >
+                Entendi
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
